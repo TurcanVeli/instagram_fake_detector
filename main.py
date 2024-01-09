@@ -167,7 +167,7 @@ class App(QWidget):
             url = "https://instagram130.p.rapidapi.com/account-info"
             querystring = {"username": username}
             headers = {
-                 'X-RapidAPI-Key': 'f373f39e1dmsh6249d0b4f743fa6p1295f4jsn8ca064878f60',
+                 'X-RapidAPI-Key': 'YOUR-API-KEY',
                 'X-RapidAPI-Host': 'instagram130.p.rapidapi.com'
             }
             response = requests.get(url, headers=headers, params=querystring).json()
