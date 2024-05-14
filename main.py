@@ -7,8 +7,51 @@ import pickle
 import os
 import pandas as pd
 import numpy as np
+import uuid
 
 
+from ultralytics import YOLO
+import requests
+import numpy as np
+import cv2
+
+# Load the YOLO model
+model = YOLO('aiModels\yolov8n.pt')
+def detect_human_in_profile_pic(url):
+    response = requests.get(url)
+    if response.status_code != 200:
+        raise Exception(f"Error fetching image from URL: {url}")
+
+    # Convert the image content to a NumPy array
+    image_array = np.array(bytearray(response.content), dtype=np.uint8)
+    image = cv2.imdecode(image_array, cv2.IMREAD_COLOR)
+
+    # Predict using the model
+    results = model.predict(image, save=False, conf=0.25)
+
+    # Check for person class (class_id for 'person' is usually 0)
+    person_class_id = 0
+    person_detected = False
+    for det in results[0].boxes:
+        cls_id = int(det.cls[0])
+        if cls_id == person_class_id:
+            person_detected = True
+            # Draw bounding box
+            x1, y1, x2, y2 = map(int, det.xyxy[0])
+            cv2.rectangle(image, (x1, y1), (x2, y2), (0, 255, 0), 2)
+            label = f"Person"
+            cv2.putText(image, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+
+        if person_detected:
+        # Generate a unique filename and save to the labeledImages directory
+            directory = 'labeledImages'
+            if not os.path.exists(directory):
+                os.makedirs(directory)
+            unique_filename = os.path.join(directory, f"labeled_image_{uuid.uuid4().hex}.jpg")
+            cv2.imwrite(unique_filename, image)
+            return unique_filename
+        else:
+            return None
 
 def calculate_ratio(username): 
     num_digits = sum(char.isdigit() for char in username)
@@ -26,12 +69,14 @@ def count_wordsin_fullname(fullname:str):
 class SecondWindow(QWidget):
     closed = pyqtSignal() 
     
-    def __init__(self, username: str, url: str, parameters: list, predict: list):
+    def __init__(self, username: str, url: str, path:str, parameters: list, predict: list):
         super().__init__()  
          
         self.username = username
         self.PPurl = url
         self.parameters = parameters
+        self.imagePath = path
+       
         self.predict = predict
         self.initUI()
     def closeEvent(self, event):
@@ -43,7 +88,23 @@ class SecondWindow(QWidget):
         self.layout = QVBoxLayout()
         self.layout.setAlignment(Qt.AlignCenter)  
 
-        
+        if self.imagePath:
+            self.label_image_path = QLabel()
+            self.label_image_path.setPixmap(QPixmap(self.imagePath))
+            self.label_image_path.setStyleSheet("""
+                QLabel {
+                    color: white;
+                    border: 3px solid white;
+                    border-radius: 15px;
+                    margin-top: 6px;
+                    margin-bottom: 6px;
+                    
+                }
+            """)  
+            self.label_image_path.setAlignment(Qt.AlignCenter)  
+            
+            self.layout.addWidget(self.label_image_path)
+            
         image = QImage()
         image.loadFromData(requests.get(self.PPurl).content)
         self.setStyleSheet("background-color: black;")  
@@ -74,7 +135,8 @@ class SecondWindow(QWidget):
             self.layout.addWidget(info_label)
 
         
-        model_labels = ['VotingClassifier Model','StackingClassifier Model', 'Decision Tree', 'Extra Trees', 'Gradient Boosting', 'Random Forest','Ada Boost']
+        model_labels = ['YoloV8','VotingClassifier Model','StackingClassifier Model', 'Decision Tree', 'Extra Trees', 'Gradient Boosting', 'Random Forest','Ada Boost']
+    
         for model, prediction in zip(model_labels, self.predict):
             label = QLabel(f"{model} Tahmini: {prediction}", self)
             label.setAlignment(Qt.AlignCenter)  
@@ -93,6 +155,7 @@ class App(QWidget):
         self.postCount = 0
         self.followers = 0
         self.follows = 0
+        self.HumanInPP = 0
         self.initUI()
 
     def initUI(self):
@@ -139,15 +202,22 @@ class App(QWidget):
 
     def on_call_api(self):
         self.username = self.username_input.text()
-        print(self.username)
         attributes = self.call_api(self.username)
+        print(attributes)
         if attributes:
+            
+            self.HumanInPP = detect_human_in_profile_pic(attributes[0])
             data_df = pd.DataFrame([attributes[1:]])
             predicts = self.get_predictions(data_df)
             self.show_results(self.username, attributes[0], predicts)
 
     def get_predictions(self, data_df):
         predicts = []
+        if not self.HumanInPP:
+            predicts.append("Fake")
+        else:
+            predicts.append("Gerçek")
+            
         for filename in os.listdir("aiModels"):
             if filename.endswith('.pkl'):
                 with open(os.path.join("aiModels", filename), 'rb') as file:
@@ -157,19 +227,21 @@ class App(QWidget):
         return predicts
 
     def show_results(self, username, url, predicts):
+            
         if self.secondWindow is None:  
-            self.secondWindow = SecondWindow(username, url, [self.postCount,self.followers,self.follows], predicts)
-            self.secondWindow.closed.connect(self.secondWindowClosed)  # Connect the signal
+            self.secondWindow = SecondWindow(username, url,self.HumanInPP, [self.postCount,self.followers,self.follows], predicts)
+            self.secondWindow.closed.connect(self.secondWindowClosed) 
             self.secondWindow.show()
 
     def call_api(self, username):
         try:
-            url = "https://instagram130.p.rapidapi.com/account-info"
-            querystring = {"username": username}
+            
+            url = "https://instagram-scraper-api2.p.rapidapi.com/v1/info"
+            querystring = {"username_or_id_or_url":username}
             headers = {
-                 'X-RapidAPI-Key': 'YOUR-API-KEY',
-                'X-RapidAPI-Host': 'instagram130.p.rapidapi.com'
-            }
+            "X-RapidAPI-Key": "30cd363e79msh521ad370e078889p16b943jsnb0e88b1054ed",
+            "X-RapidAPI-Host": "instagram-scraper-api2.p.rapidapi.com"
+        }
             response = requests.get(url, headers=headers, params=querystring).json()
             return self.parse_response(response, username)
         except Exception as e:
@@ -178,23 +250,23 @@ class App(QWidget):
             return []
 
     def parse_response(self, response, username):
-        self.followers = response['edge_followed_by']['count']
-        self.follows = response['edge_follow']['count']
-        self.postCount = response['edge_owner_to_timeline_media']['count']
+        self.followers = response['data']['follower_count']
+        self.follows = response['data']['following_count']
+        self.postCount = response['data']['media_count']
         aktivite_oranı = np.round(self.postCount / self.followers, 2) if self.followers != 0 else 0
-        fullName = response['full_name']
+        fullName = response['data']['full_name']
         isEqual = int(fullName == username)
-        isPrivate = int(response['is_private'])
-        externalUrl = 0 if response['external_url'] else 1
+        isPrivate = int(response['data']['is_private'])
+        externalUrl = 0 if response['data']['external_url'] else 1
 
         attributes = [
-            response['profile_pic_url'],
-            check_url(response['profile_pic_url']),
+            response['data']['profile_pic_url'],
+            check_url(response['data']['profile_pic_url']),
             calculate_ratio(username),
             count_wordsin_fullname(fullName),
             calculate_ratio(fullName),
             isEqual,
-            len(response['biography_with_entities']['raw_text']),
+            len(response['data']['biography_with_entities']['raw_text']),
             externalUrl,
             isPrivate,
             self.postCount,
